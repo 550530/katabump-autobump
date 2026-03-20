@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-KataBump 自动续订/提醒脚本（最终修复版）
+KataBump 自动续订/提醒脚本（重定向修复版）
 cron: 0 9,21 * * *
 new Env('KataBump续订');
 """
@@ -191,26 +191,42 @@ def run():
     
     try:
         server_page = None
-        # ========== 优先复用Cookie，跳过登录 ==========
+        # ========== 优先复用Cookie，跳过登录（修复重定向） ==========
         if cookie_loaded:
             log('🔓 复用Cookie会话，跳过登录步骤...')
-            server_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
+            # 关键：禁用自动重定向，避免循环
+            server_page = session.get(
+                f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}',
+                timeout=30,
+                allow_redirects=False
+            )
             
-            # 检查Cookie是否有效（跳转到登录页则失效）
-            if '/auth/login' in server_page.url:
-                log('❌ Cookie已失效，切换到账号密码登录...')
+            # 手动检查重定向状态
+            redirect_to_login = False
+            if server_page.status_code in [301, 302, 307, 308]:
+                redirect_url = server_page.headers.get('Location', '')
+                log(f'🔄 检测到重定向: {redirect_url}')
+                if '/auth/login' in redirect_url:
+                    log('❌ Cookie已失效（重定向到登录页），切换到账号密码登录...')
+                    redirect_to_login = True
+                else:
+                    # 非登录页重定向，手动跟随一次
+                    log(f'🔄 跟随重定向: {redirect_url}')
+                    server_page = session.get(redirect_url, timeout=30, allow_redirects=False)
+            
+            if redirect_to_login:
                 server_page = None
         
         # ========== Cookie失效/未配置，走账号密码登录 ==========
         if not server_page:
             log('🔐 开始账号密码登录...')
-            # 先获取登录页Cookie
-            session.get(f'{DASHBOARD_URL}/auth/login', timeout=30)
+            # 先获取登录页Cookie（禁用重定向）
+            session.get(f'{DASHBOARD_URL}/auth/login', timeout=30, allow_redirects=False)
             # 模拟真人操作，延迟5秒提交
             log('⏳ 模拟真人输入，延迟5秒提交登录请求...')
             time.sleep(5)
             
-            # 提交登录请求
+            # 提交登录请求（允许重定向，登录成功需要跳转）
             login_resp = session.post(
                 f'{DASHBOARD_URL}/auth/login',
                 data={
@@ -239,11 +255,21 @@ def run():
                 return
             else:
                 log('✅ 账号密码登录成功！')
-                # 获取服务器页面
-                server_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
+                # 获取服务器页面（禁用重定向）
+                server_page = session.get(
+                    f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}',
+                    timeout=30,
+                    allow_redirects=False
+                )
         
         # ========== 获取服务器信息 ==========
         log('📄 获取服务器到期信息...')
+        # 确保页面响应正常
+        if server_page.status_code != 200:
+            log(f'⚠️ 服务器页面响应异常: {server_page.status_code}')
+            # 尝试重新获取（允许一次重定向）
+            server_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30, allow_redirects=True)
+        
         expiry_date = get_expiry(server_page.text) or '未知'
         remaining_days = days_until(expiry_date)
         csrf_token = get_csrf(server_page.text)
@@ -291,7 +317,7 @@ def run():
             
             # 续订成功
             if 'renew=success' in location:
-                check_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
+                check_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30, allow_redirects=True)
                 new_expiry = get_expiry(check_page.text) or '未知'
                 log(f'🎉 续订成功！新到期时间: {new_expiry}')
                 send_telegram(
@@ -329,7 +355,7 @@ def run():
                 return
         
         # 最终验证续订结果
-        check_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
+        check_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30, allow_redirects=True)
         new_expiry = get_expiry(check_page.text) or '未知'
         if new_expiry > expiry_date:
             log(f'🎉 续订成功！新到期时间: {new_expiry}')
@@ -363,7 +389,7 @@ def run():
 def main():
     """脚本入口"""
     log('=' * 50)
-    log('   KataBump 自动续订/提醒脚本（最终修复版）')
+    log('   KataBump 自动续订/提醒脚本（重定向修复版）')
     log('=' * 50)
     
     # 检查核心配置
