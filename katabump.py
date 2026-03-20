@@ -10,20 +10,17 @@ import os
 import sys
 import re
 import requests
-import time  # 新增：导入时间模块
+import time  # 新增：导入时间模块用于延迟
 from datetime import datetime, timezone, timedelta
 
 # ========== 核心配置（严格匹配你的环境变量名） ==========
 DASHBOARD_URL = 'https://dashboard.katabump.com'
-# 环境变量读取（完全匹配你指定的名称）
 KATA_SERVER_ID = os.environ.get('KATA_SERVER_ID', '08549d19')
 USER_EMAIL = os.environ.get('USER_EMAIL', '')
 USER_PASSWORD = os.environ.get('USER_PASSWORD', '')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
-# Socks5 代理配置（新增）
 SOCKS5_PROXY = os.environ.get('SOCKS5_PROXY', '')
-# 其他配置
 EXECUTOR_NAME = os.environ.get('EXECUTOR_NAME', 'https://ql.api.sld.tw')
 
 def log(msg):
@@ -32,7 +29,6 @@ def log(msg):
     t = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
     print(f'[{t}] {msg}')
 
-
 def send_telegram(message):
     """发送Telegram通知（可选走代理）"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -40,7 +36,6 @@ def send_telegram(message):
         return False
     try:
         telegram_session = requests.Session()
-        # Telegram请求也走Socks5代理
         if SOCKS5_PROXY:
             telegram_session.proxies = {
                 'http': SOCKS5_PROXY,
@@ -57,12 +52,10 @@ def send_telegram(message):
         log(f'❌ Telegram 发送失败: {e}')
     return False
 
-
 def get_expiry(html):
     """从页面提取到期日期"""
     match = re.search(r'Expiry[\s\S]*?(\d{4}-\d{2}-\d{2})', html, re.IGNORECASE)
     return match.group(1) if match else None
-
 
 def get_csrf(html):
     """从页面提取CSRF令牌"""
@@ -76,7 +69,6 @@ def get_csrf(html):
             return m.group(1)
     return None
 
-
 def days_until(date_str):
     """计算距离到期的天数"""
     try:
@@ -85,7 +77,6 @@ def days_until(date_str):
         return (exp - today).days
     except:
         return None
-
 
 def parse_renew_error(url):
     """解析续订错误信息"""
@@ -105,7 +96,6 @@ def parse_renew_error(url):
     
     return error, None
 
-
 def run():
     """核心执行逻辑"""
     log('🚀 KataBump 自动续订/提醒脚本启动')
@@ -120,7 +110,6 @@ def run():
     
     # 初始化请求会话
     session = requests.Session()
-    # 配置Socks5代理
     if SOCKS5_PROXY:
         session.proxies = {
             'http': SOCKS5_PROXY,
@@ -134,14 +123,14 @@ def run():
     })
     
     try:
-        # ========== 步骤1：登录 ==========
+        # ========== 步骤1：登录（含5秒延迟） ==========
         log('🔐 开始登录...')
         # 先获取登录页Cookie
         session.get(f'{DASHBOARD_URL}/auth/login', timeout=30)
         
-        # 新增：模拟真人操作，延迟5秒再提交登录（关键修改）
+        # 核心修改：模拟真人操作，延迟5秒提交登录
         log('⏳ 模拟真人输入，延迟5秒提交登录请求...')
-        time.sleep(5)  # 延迟5秒
+        time.sleep(5)  # 5秒延迟
         
         # 提交登录请求
         login_resp = session.post(
@@ -234,7 +223,6 @@ def run():
             
             # 续订成功
             if 'renew=success' in location:
-                # 验证新的到期时间
                 check_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
                 new_expiry = get_expiry(check_page.text) or '未知'
                 log(f'🎉 续订成功！新到期时间: {new_expiry}')
@@ -318,7 +306,6 @@ def run():
         )
         raise
 
-
 def main():
     """脚本入口"""
     log('=' * 50)
@@ -333,7 +320,6 @@ def main():
     # 执行核心逻辑
     run()
     log('🏁 脚本执行完成')
-
 
 if __name__ == '__main__':
     main()
