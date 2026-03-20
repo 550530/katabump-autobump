@@ -10,6 +10,7 @@ import os
 import sys
 import re
 import requests
+import time  # 新增：导入时间模块
 from datetime import datetime, timezone, timedelta
 
 # ========== 核心配置（严格匹配你的环境变量名） ==========
@@ -137,6 +138,10 @@ def run():
         log('🔐 开始登录...')
         # 先获取登录页Cookie
         session.get(f'{DASHBOARD_URL}/auth/login', timeout=30)
+        
+        # 新增：模拟真人操作，延迟5秒再提交登录（关键修改）
+        log('⏳ 模拟真人输入，延迟5秒提交登录请求...')
+        time.sleep(5)  # 延迟5秒
         
         # 提交登录请求
         login_resp = session.post(
