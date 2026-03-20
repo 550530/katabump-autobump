@@ -1,9 +1,9 @@
-name: KataBump Python Auto Renew
+name: KataBump Proxy Auto Renew
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 1,13 * * *' # 每天北京时间 9:00 和 21:00 运行
+    - cron: '0 1,13 * * *'
 
 jobs:
   run-renew:
@@ -19,13 +19,15 @@ jobs:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: pip install requests
+        # 核心：安装支持 SOCKS 代理的扩展包
+        run: pip install requests[socks] pysocks
 
-      - name: Run KataBump Script
+      - name: Run Script
         env:
           KATA_EMAIL: ${{ secrets.USER_EMAIL }}
           KATA_PASSWORD: ${{ secrets.USER_PASSWORD }}
-          KATA_SERVER_ID: '185829' # 如果你的 ID 不同请修改
+          # 记得在 Secrets 中添加这个变量
+          S5_PROXY: ${{ secrets.S5_PROXY }} 
           TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_USER_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python katabump.py
