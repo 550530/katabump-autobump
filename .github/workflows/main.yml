@@ -41,11 +41,11 @@ jobs:
       - name: Run KataBump renew script
         env:
           # 把 Secrets 注入为环境变量（和脚本里的变量名对应）
-          KATA_EMAIL: ${{ secrets.KATA_EMAIL }}
-          KATA_PASSWORD: ${{ secrets.KATA_PASSWORD }}
+          USER_EMAIL: ${{ secrets.USER_EMAIL }}
+          USER_PASSWORD: ${{ secrets.USER_PASSWORD }}
           KATA_SERVER_ID: ${{ secrets.KATA_SERVER_ID }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_USER_ID: ${{ secrets.TG_USER_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           EXECUTOR_NAME: ${{ secrets.EXECUTOR_NAME }}
         run: |
           python katabump.py
