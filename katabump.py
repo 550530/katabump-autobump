@@ -21,9 +21,9 @@ DASHBOARD_URL = 'https://dashboard.katabump.com'
 
 # 新增：手动Cookie配置（优先复用已登录会话，必填PHPSESSID，其他可选）
 MANUAL_COOKIES = {
-    'PHPSESSID': '你的PHPSESSID值',  # 替换成你浏览器里复制的实际值
-    'kata_t': '你的kata_t值',        # 有就填，没有留空或删除这行
-    'katabump_s': '你的katabump_s值' # 有就填，没有留空或删除这行
+    'PHPSESSID': 'ckov8k9rrqpq8ne4cffbuqk066',  # 替换成你浏览器里复制的实际值
+    'kata_t': '141189940969bd199a3acd91.1982057',        # 有就填，没有留空或删除这行
+    'katabump_s': 'a7e638d94563f59ae8858ddd3f812a3f3d332559dcf50d22b9db5d7768da3488' # 有就填，没有留空或删除这行
 }
 
 # 原有环境变量配置（完全保留）
