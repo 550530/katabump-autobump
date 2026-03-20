@@ -15,10 +15,11 @@ from datetime import datetime, timezone, timedelta
 # 配置
 DASHBOARD_URL = 'https://dashboard.katabump.com'
 SERVER_ID = os.environ.get('KATA_SERVER_ID', '08549d19')
-KATA_EMAIL = os.environ.get('KATA_EMAIL', '')
-KATA_PASSWORD = os.environ.get('KATA_PASSWORD', '')
-TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN', '')
-TG_CHAT_ID = os.environ.get('TG_USER_ID', '')
+# 适配你的Secrets名称
+KATA_EMAIL = os.environ.get('USER_EMAIL', '')
+KATA_PASSWORD = os.environ.get('USER_PASSWORD', '')
+TG_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TG_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # 执行器配置
 EXECUTOR_NAME = os.environ.get('EXECUTOR_NAME', 'https://ql.api.sld.tw')
@@ -125,8 +126,22 @@ def run():
         log(f'📍 登录后URL: {login_resp.url}')
         log(f'🍪 Cookies: {list(session.cookies.keys())}')
         
+        # 修复核心逻辑：区分验证码和真的登录失败
         if '/auth/login' in login_resp.url:
-            raise Exception('登录失败')
+            # 检测是否是验证码问题
+            if 'error=captcha' in login_resp.url:
+                log('⚠️ 登录触发验证码验证，无法自动登录')
+                send_telegram(
+                    f'⚠️ KataBump 需要手动验证\n\n'
+                    f'🖥 服务器: <code>{SERVER_ID}</code>\n'
+                    f'❗ 登录时触发了验证码验证，请手动登录后再试\n'
+                    f'💻 执行器: {EXECUTOR_NAME}\n\n'
+                    f'👉 <a href="{DASHBOARD_URL}/auth/login">点击手动登录</a>'
+                )
+                return  # 退出但不报错，避免Workflow显示失败
+            else:
+                # 真的登录失败（账号密码错误等）
+                raise Exception('登录失败（账号/密码错误或其他原因）')
         
         log('✅ 登录成功')
         
@@ -211,7 +226,7 @@ def run():
                 return
             
             elif 'error=captcha' in location:
-                log('❌ 需要 Captcha 验证')
+                log('❌ 续订需要 Captcha 验证')
                 
                 if days is not None and days <= 2:
                     send_telegram(
@@ -219,7 +234,7 @@ def run():
                         f'🖥 服务器: <code>{SERVER_ID}</code>\n'
                         f'📅 到期: {expiry}\n'
                         f'⏰ 剩余: {days} 天\n'
-                        f'❗ 自动续订需要验证码\n'
+                        f'❗ 续订需要验证码\n'
                         f'💻 执行器: {EXECUTOR_NAME}\n\n'
                         f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={SERVER_ID}">点击续订</a>'
                     )
@@ -284,7 +299,7 @@ def main():
     log('=' * 50)
     
     if not KATA_EMAIL or not KATA_PASSWORD:
-        log('❌ 请设置 KATA_EMAIL 和 KATA_PASSWORD')
+        log('❌ 请设置 USER_EMAIL 和 USER_PASSWORD')
         sys.exit(1)
     
     run()
