@@ -15,6 +15,14 @@ from datetime import datetime, timezone, timedelta
 
 # ========== 核心配置（严格匹配你的环境变量名） ==========
 DASHBOARD_URL = 'https://dashboard.katabump.com'
+
+# 新增：手动Cookie配置（优先复用已登录会话，必填PHPSESSID，其他可选）
+MANUAL_COOKIES = {
+    'PHPSESSID': '你的PHPSESSID值',  # 替换成你浏览器里复制的实际值，比如：123456abcdef
+    'kata_t': '你的kata_t值',        # 有就填，没有留空或删除这行
+    'katabump_s': '你的katabump_s值' # 有就填，没有留空或删除这行
+}
+
 KATA_SERVER_ID = os.environ.get('KATA_SERVER_ID', '08549d19')
 USER_EMAIL = os.environ.get('USER_EMAIL', '')
 USER_PASSWORD = os.environ.get('USER_PASSWORD', '')
