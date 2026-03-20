@@ -12,16 +12,17 @@ import re
 import requests
 from datetime import datetime, timezone, timedelta
 
+# ========== 新增：代理配置 ==========
+# 从环境变量读取 Socks5 代理信息（格式：socks5://user:pass@host:port 或 socks5://host:port）
+SOCKS5_PROXY = os.environ.get('SOCKS5_PROXY', '')
+
 # 配置
 DASHBOARD_URL = 'https://dashboard.katabump.com'
 SERVER_ID = os.environ.get('KATA_SERVER_ID', '08549d19')
-# 适配你的Secrets名称
 KATA_EMAIL = os.environ.get('USER_EMAIL', '')
 KATA_PASSWORD = os.environ.get('USER_PASSWORD', '')
 TG_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TG_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
-
-# 执行器配置
 EXECUTOR_NAME = os.environ.get('EXECUTOR_NAME', 'https://ql.api.sld.tw')
 
 def log(msg):
@@ -34,7 +35,14 @@ def send_telegram(message):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return False
     try:
-        requests.post(
+        # Telegram 也可选走代理
+        telegram_session = requests.Session()
+        if SOCKS5_PROXY:
+            telegram_session.proxies = {
+                'http': SOCKS5_PROXY,
+                'https': SOCKS5_PROXY
+            }
+        telegram_session.post(
             f'https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage',
             json={'chat_id': TG_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
             timeout=30
@@ -94,8 +102,20 @@ def parse_renew_error(url):
 def run():
     log('🚀 KataBump 自动续订/提醒')
     log(f'🖥 服务器 ID: {SERVER_ID}')
+    # 打印代理配置（脱敏）
+    if SOCKS5_PROXY:
+        log(f'🔌 使用 Socks5 代理: {SOCKS5_PROXY.replace("://", "://***:@") if "@" in SOCKS5_PROXY else SOCKS5_PROXY}')
+    else:
+        log('🔌 未使用代理')
     
     session = requests.Session()
+    # ========== 新增：配置 Socks5 代理 ==========
+    if SOCKS5_PROXY:
+        session.proxies = {
+            'http': SOCKS5_PROXY,
+            'https': SOCKS5_PROXY
+        }
+    
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -135,10 +155,11 @@ def run():
                     f'⚠️ KataBump 需要手动验证\n\n'
                     f'🖥 服务器: <code>{SERVER_ID}</code>\n'
                     f'❗ 登录时触发了验证码验证，请手动登录后再试\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                     f'💻 执行器: {EXECUTOR_NAME}\n\n'
                     f'👉 <a href="{DASHBOARD_URL}/auth/login">点击手动登录</a>'
                 )
-                return  # 退出但不报错，避免Workflow显示失败
+                return  # 退出但不报错
             else:
                 # 真的登录失败（账号密码错误等）
                 raise Exception('登录失败（账号/密码错误或其他原因）')
@@ -167,6 +188,7 @@ def run():
                     f'📅 到期: {expiry}\n'
                     f'⏰ 剩余: {days} 天\n'
                     f'📝 {error}\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                     f'💻 执行器: {EXECUTOR_NAME}\n\n'
                     f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={SERVER_ID}">查看详情</a>'
                 )
@@ -206,6 +228,7 @@ def run():
                     f'🖥 服务器: <code>{SERVER_ID}</code>\n'
                     f'📅 原到期: {expiry}\n'
                     f'📅 新到期: {new_expiry}\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                     f'💻 执行器: {EXECUTOR_NAME}'
                 )
                 return
@@ -221,6 +244,7 @@ def run():
                         f'📅 到期: {expiry}\n'
                         f'⏰ 剩余: {days} 天\n'
                         f'📝 {error}\n'
+                        f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                         f'💻 执行器: {EXECUTOR_NAME}'
                     )
                 return
@@ -235,6 +259,7 @@ def run():
                         f'📅 到期: {expiry}\n'
                         f'⏰ 剩余: {days} 天\n'
                         f'❗ 续订需要验证码\n'
+                        f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                         f'💻 执行器: {EXECUTOR_NAME}\n\n'
                         f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={SERVER_ID}">点击续订</a>'
                     )
@@ -253,6 +278,7 @@ def run():
                     f'📅 到期: {expiry}\n'
                     f'⏰ 剩余: {days} 天\n'
                     f'❗ 自动续订需要验证码\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                     f'💻 执行器: {EXECUTOR_NAME}\n\n'
                     f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={SERVER_ID}">点击续订</a>'
                 )
@@ -269,6 +295,7 @@ def run():
                 f'🖥 服务器: <code>{SERVER_ID}</code>\n'
                 f'📅 原到期: {expiry}\n'
                 f'📅 新到期: {new_expiry}\n'
+                f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                 f'💻 执行器: {EXECUTOR_NAME}'
             )
         else:
@@ -278,33 +305,6 @@ def run():
                     f'⚠️ KataBump 请检查续订状态\n\n'
                     f'🖥 服务器: <code>{SERVER_ID}</code>\n'
                     f'📅 到期: {new_expiry}\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
                     f'💻 执行器: {EXECUTOR_NAME}\n\n'
-                    f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={SERVER_ID}">查看详情</a>'
-                )
-    
-    except Exception as e:
-        log(f'❌ 错误: {e}')
-        send_telegram(
-            f'❌ KataBump 出错\n\n'
-            f'🖥 服务器: <code>{SERVER_ID}</code>\n'
-            f'❗ {e}\n'
-            f'💻 执行器: {EXECUTOR_NAME}'
-        )
-        raise
-
-
-def main():
-    log('=' * 50)
-    log('   KataBump 自动续订/提醒脚本')
-    log('=' * 50)
-    
-    if not KATA_EMAIL or not KATA_PASSWORD:
-        log('❌ 请设置 USER_EMAIL 和 USER_PASSWORD')
-        sys.exit(1)
-    
-    run()
-    log('🏁 完成')
-
-
-if __name__ == '__main__':
-    main()
+                    f'👉
