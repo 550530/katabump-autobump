@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-KataBump 自动续订/提醒脚本
+KataBump 自动续订/提醒脚本（最终修复版）
 cron: 0 9,21 * * *
 new Env('KataBump续订');
 """
@@ -9,26 +9,30 @@ new Env('KataBump续订');
 import os
 import sys
 import re
+import ssl
 import requests
-import time  # 新增：导入时间模块用于延迟
+import time
 from datetime import datetime, timezone, timedelta
+from urllib3.poolmanager import PoolManager
+from urllib3.contrib.socks import SOCKSProxyManager
 
 # ========== 核心配置（严格匹配你的环境变量名） ==========
 DASHBOARD_URL = 'https://dashboard.katabump.com'
 
 # 新增：手动Cookie配置（优先复用已登录会话，必填PHPSESSID，其他可选）
 MANUAL_COOKIES = {
-    'PHPSESSID': '你的PHPSESSID值',  # 替换成你浏览器里复制的实际值，比如：123456abcdef
+    'PHPSESSID': '你的PHPSESSID值',  # 替换成你浏览器里复制的实际值
     'kata_t': '你的kata_t值',        # 有就填，没有留空或删除这行
     'katabump_s': '你的katabump_s值' # 有就填，没有留空或删除这行
 }
 
+# 原有环境变量配置（完全保留）
 KATA_SERVER_ID = os.environ.get('KATA_SERVER_ID', '08549d19')
 USER_EMAIL = os.environ.get('USER_EMAIL', '')
 USER_PASSWORD = os.environ.get('USER_PASSWORD', '')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
-SOCKS5_PROXY = os.environ.get('SOCKS5_PROXY', '')
+SOCKS5_PROXY = os.environ.get('SOCKS5_PROXY', '')  # 格式必须是：socks5://用户名:密码@IP:端口
 EXECUTOR_NAME = os.environ.get('EXECUTOR_NAME', 'https://ql.api.sld.tw')
 
 def log(msg):
@@ -44,11 +48,15 @@ def send_telegram(message):
         return False
     try:
         telegram_session = requests.Session()
+        
+        # Telegram通知也适配Socks5代理
         if SOCKS5_PROXY:
-            telegram_session.proxies = {
-                'http': SOCKS5_PROXY,
-                'https': SOCKS5_PROXY
-            }
+            telegram_session.verify = False
+            requests.packages.urllib3.disable_warnings()
+            adapter = Socks5Adapter(SOCKS5_PROXY)
+            telegram_session.mount('http://', adapter)
+            telegram_session.mount('https://', adapter)
+        
         telegram_session.post(
             f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage',
             json={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
@@ -59,6 +67,28 @@ def send_telegram(message):
     except Exception as e:
         log(f'❌ Telegram 发送失败: {e}')
     return False
+
+# 自定义Socks5适配器（修复SSL版本错误）
+class Socks5Adapter(requests.adapters.HTTPAdapter):
+    def __init__(self, proxy_url, **kwargs):
+        self.proxy_url = proxy_url
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False):
+        if 'socks5' in self.proxy_url:
+            self.poolmanager = SOCKSProxyManager(
+                proxy_url=self.proxy_url,
+                num_pools=connections,
+                maxsize=maxsize,
+                block=block,
+                ssl_version=ssl.PROTOCOL_TLSv1_2  # 指定SSL版本，解决版本不匹配
+            )
+        else:
+            self.poolmanager = PoolManager(
+                num_pools=connections,
+                maxsize=maxsize,
+                block=block
+            )
 
 def get_expiry(html):
     """从页面提取到期日期"""
@@ -111,19 +141,39 @@ def run():
     
     # 代理状态日志（脱敏显示）
     if SOCKS5_PROXY:
-        proxy_log = SOCKS5_PROXY.replace("://", "://***:@") if "@" in SOCKS5_PROXY else SOCKS5_PROXY
+        # 脱敏处理：隐藏密码和部分用户名
+        proxy_log = SOCKS5_PROXY.replace("://", "://***:@").split('@')[0] + '@***.***.***.***:' + SOCKS5_PROXY.split(':')[-1]
         log(f'🔌 使用 Socks5 代理: {proxy_log}')
     else:
         log('🔌 未配置 Socks5 代理')
     
     # 初始化请求会话
     session = requests.Session()
+    
+    # ========== 修复Socks5代理SSL错误核心配置 ==========
+    # 禁用SSL证书验证（解决版本不匹配问题）
+    session.verify = False
+    # 忽略SSL警告
+    requests.packages.urllib3.disable_warnings()
+    
+    # 配置Socks5代理适配器
     if SOCKS5_PROXY:
-        session.proxies = {
-            'http': SOCKS5_PROXY,
-            'https': SOCKS5_PROXY
-        }
-    # 模拟更真实的浏览器请求头（降低验证码触发概率）
+        adapter = Socks5Adapter(SOCKS5_PROXY)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+    
+    # ========== 加载手动配置的Cookie ==========
+    log('🍪 加载手动配置的Cookie...')
+    cookie_loaded = False
+    for cookie_name, cookie_value in MANUAL_COOKIES.items():
+        if cookie_value and cookie_value != f'你的{cookie_name}值':  # 排除默认占位符
+            session.cookies.set(cookie_name, cookie_value)
+            log(f'✅ 已添加Cookie: {cookie_name} = {cookie_value[:8]}***')
+            cookie_loaded = True
+    if not cookie_loaded:
+        log('⚠️ 未配置有效Cookie，将使用账号密码登录')
+    
+    # 模拟更真实的浏览器请求头
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -138,58 +188,62 @@ def run():
         'Upgrade-Insecure-Requests': '1',
         'Cache-Control': 'max-age=0'
     })
-
+    
     try:
-        # ========== 步骤1：登录（含5秒延迟） ==========
-        log('🔐 开始登录...')
-        # 先获取登录页Cookie
-        session.get(f'{DASHBOARD_URL}/auth/login', timeout=30)
+        server_page = None
+        # ========== 优先复用Cookie，跳过登录 ==========
+        if cookie_loaded:
+            log('🔓 复用Cookie会话，跳过登录步骤...')
+            server_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
+            
+            # 检查Cookie是否有效（跳转到登录页则失效）
+            if '/auth/login' in server_page.url:
+                log('❌ Cookie已失效，切换到账号密码登录...')
+                server_page = None
         
-        # 核心修改：模拟真人操作，延迟5秒提交登录
-        log('⏳ 模拟真人输入，延迟5秒提交登录请求...')
-        time.sleep(5)  # 5秒延迟
-        
-        # 提交登录请求
-        login_resp = session.post(
-            f'{DASHBOARD_URL}/auth/login',
-            data={
-                'email': USER_EMAIL,
-                'password': USER_PASSWORD,
-                'remember': 'true'
-            },
-            headers={
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Origin': DASHBOARD_URL,
-                'Referer': f'{DASHBOARD_URL}/auth/login',
-            },
-            timeout=30,
-            allow_redirects=True
-        )
-        
-        log(f'📍 登录后跳转URL: {login_resp.url}')
-        log(f'🍪 登录后Cookie: {list(session.cookies.keys())}')
-        
-        # 登录状态判断（区分验证码和真失败）
-        if '/auth/login' in login_resp.url:
-            if 'error=captcha' in login_resp.url:
+        # ========== Cookie失效/未配置，走账号密码登录 ==========
+        if not server_page:
+            log('🔐 开始账号密码登录...')
+            # 先获取登录页Cookie
+            session.get(f'{DASHBOARD_URL}/auth/login', timeout=30)
+            # 模拟真人操作，延迟5秒提交
+            log('⏳ 模拟真人输入，延迟5秒提交登录请求...')
+            time.sleep(5)
+            
+            # 提交登录请求
+            login_resp = session.post(
+                f'{DASHBOARD_URL}/auth/login',
+                data={
+                    'email': USER_EMAIL,
+                    'password': USER_PASSWORD,
+                    'remember': 'true'
+                },
+                headers={
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Origin': DASHBOARD_URL,
+                    'Referer': f'{DASHBOARD_URL}/auth/login',
+                },
+                timeout=30,
+                allow_redirects=True
+            )
+            
+            # 检查登录是否触发验证码
+            if '/auth/login' in login_resp.url:
                 log('⚠️ 登录触发验证码验证，无法自动登录')
                 send_telegram(
-                    f'⚠️ KataBump 需要手动验证\n\n'
-                    f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
-                    f'❗ 登录时触发了验证码验证，请手动登录完成验证\n'
+                    f'⚠️ KataBump 登录触发验证码\n\n'
+                    f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
                     f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                    f'💻 执行器: {EXECUTOR_NAME}\n\n'
-                    f'👉 <a href="{DASHBOARD_URL}/auth/login">点击手动登录</a>'
+                    f'👉 <a href="{DASHBOARD_URL}/auth/login">点击手动登录验证</a>'
                 )
                 return
             else:
-                raise Exception('登录失败（账号/密码错误或其他原因）')
+                log('✅ 账号密码登录成功！')
+                # 获取服务器页面
+                server_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
         
-        log('✅ 登录成功')
-        
-        # ========== 步骤2：获取服务器信息 ==========
+        # ========== 获取服务器信息 ==========
         log('📄 获取服务器到期信息...')
-        server_page = session.get(f'{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}', timeout=30)
         expiry_date = get_expiry(server_page.text) or '未知'
         remaining_days = days_until(expiry_date)
         csrf_token = get_csrf(server_page.text)
@@ -200,20 +254,17 @@ def run():
         renew_error, renew_date = parse_renew_error(server_page.url)
         if renew_error:
             log(f'⏳ 续订限制: {renew_error}')
-            if remaining_days is not None and remaining_days <= 2:
-                send_telegram(
-                    f'ℹ️ KataBump 续订提醒\n\n'
-                    f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
-                    f'📅 到期时间: {expiry_date}\n'
-                    f'⏰ 剩余天数: {remaining_days} 天\n'
-                    f'📝 续订限制: {renew_error}\n'
-                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                    f'💻 执行器: {EXECUTOR_NAME}\n\n'
-                    f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}">查看详情</a>'
-                )
+            send_telegram(
+                f'ℹ️ KataBump 续订提醒\n\n'
+                f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
+                f'📅 到期时间: {expiry_date}\n'
+                f'⏰ 剩余天数: {remaining_days} 天\n'
+                f'📝 续订限制: {renew_error}\n'
+                f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}'
+            )
             return
         
-        # ========== 步骤3：尝试续订 ==========
+        # ========== 尝试续订 ==========
         if not csrf_token:
             log('❌ 未获取到CSRF令牌，跳过续订')
             return
@@ -244,46 +295,37 @@ def run():
                 new_expiry = get_expiry(check_page.text) or '未知'
                 log(f'🎉 续订成功！新到期时间: {new_expiry}')
                 send_telegram(
-                    f'✅ KataBump 续订成功\n\n'
-                    f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
+                    f'✅ KataBump 续订成功！\n\n'
+                    f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
                     f'📅 原到期时间: {expiry_date}\n'
                     f'📅 新到期时间: {new_expiry}\n'
-                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                    f'💻 执行器: {EXECUTOR_NAME}'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}'
                 )
                 return
             
             # 续订需要验证码
             elif 'error=captcha' in location:
                 log('❌ 续订触发验证码验证')
-                if remaining_days is not None and remaining_days <= 2:
-                    send_telegram(
-                        f'⚠️ KataBump 需要手动续订\n\n'
-                        f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
-                        f'📅 到期时间: {expiry_date}\n'
-                        f'⏰ 剩余天数: {remaining_days} 天\n'
-                        f'❗ 续订需要验证码验证\n'
-                        f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                        f'💻 执行器: {EXECUTOR_NAME}\n\n'
-                        f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}">点击手动续订</a>'
-                    )
+                send_telegram(
+                    f'⚠️ KataBump 续订触发验证码\n\n'
+                    f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
+                    f'📅 到期时间: {expiry_date}\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
+                    f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}">点击手动续订验证</a>'
+                )
                 return
             
             # 其他续订错误
             elif 'renew-error' in location:
                 error_msg, _ = parse_renew_error(location)
                 log(f'❌ 续订失败: {error_msg}')
-                if remaining_days is not None and remaining_days <= 2:
-                    send_telegram(
-                        f'ℹ️ KataBump 续订提醒\n\n'
-                        f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
-                        f'📅 到期时间: {expiry_date}\n'
-                        f'⏰ 剩余天数: {remaining_days} 天\n'
-                        f'📝 续订失败原因: {error_msg}\n'
-                        f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                        f'💻 执行器: {EXECUTOR_NAME}\n\n'
-                        f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}">查看详情</a>'
-                    )
+                send_telegram(
+                    f'❌ KataBump 续订失败\n\n'
+                    f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
+                    f'📅 到期时间: {expiry_date}\n'
+                    f'📝 失败原因: {error_msg}\n'
+                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}'
+                )
                 return
         
         # 最终验证续订结果
@@ -292,46 +334,48 @@ def run():
         if new_expiry > expiry_date:
             log(f'🎉 续订成功！新到期时间: {new_expiry}')
             send_telegram(
-                f'✅ KataBump 续订成功\n\n'
-                f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
+                f'✅ KataBump 续订成功！\n\n'
+                f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
                 f'📅 原到期时间: {expiry_date}\n'
                 f'📅 新到期时间: {new_expiry}\n'
-                f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                f'💻 执行器: {EXECUTOR_NAME}'
+                f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}'
             )
         else:
             log('⚠️ 续订状态未知，未检测到到期时间变化')
-            if remaining_days is not None and remaining_days <= 2:
-                send_telegram(
-                    f'⚠️ KataBump 请检查续订状态\n\n'
-                    f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
-                    f'📅 当前到期时间: {new_expiry}\n'
-                    f'⏰ 剩余天数: {remaining_days} 天\n'
-                    f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-                    f'💻 执行器: {EXECUTOR_NAME}\n\n'
-                    f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}">手动检查</a>'
-                )
+            send_telegram(
+                f'⚠️ KataBump 续订状态未知\n\n'
+                f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
+                f'📅 当前到期时间: {new_expiry}\n'
+                f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
+                f'👉 <a href="{DASHBOARD_URL}/servers/edit?id={KATA_SERVER_ID}">手动检查续订状态</a>'
+            )
     
     except Exception as e:
         log(f'❌ 脚本执行出错: {str(e)}')
         send_telegram(
             f'❌ KataBump 脚本执行出错\n\n'
-            f'🖥 服务器: <code>{KATA_SERVER_ID}</code>\n'
-            f'❗ 错误信息: {str(e)}\n'
-            f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}\n'
-            f'💻 执行器: {EXECUTOR_NAME}'
+            f'🖥 服务器 ID: <code>{KATA_SERVER_ID}</code>\n'
+            f'❗ 错误信息: <code>{str(e)}</code>\n'
+            f'🔌 代理状态: {"已使用" if SOCKS5_PROXY else "未使用"}'
         )
         raise
 
 def main():
     """脚本入口"""
     log('=' * 50)
-    log('   KataBump 自动续订/提醒脚本')
+    log('   KataBump 自动续订/提醒脚本（最终修复版）')
     log('=' * 50)
     
     # 检查核心配置
-    if not USER_EMAIL or not USER_PASSWORD:
-        log('❌ 请配置 USER_EMAIL 和 USER_PASSWORD 环境变量')
+    if not MANUAL_COOKIES['PHPSESSID'] or MANUAL_COOKIES['PHPSESSID'] == '你的PHPSESSID值':
+        log('⚠️ 未配置有效Cookie，依赖账号密码登录...')
+        if not USER_EMAIL or not USER_PASSWORD:
+            log('❌ 请配置 USER_EMAIL 和 USER_PASSWORD 环境变量')
+            sys.exit(1)
+    
+    # 检查代理格式
+    if SOCKS5_PROXY and not SOCKS5_PROXY.startswith('socks5://'):
+        log('❌ Socks5代理格式错误！正确格式：socks5://用户名:密码@IP:端口')
         sys.exit(1)
     
     # 执行核心逻辑
